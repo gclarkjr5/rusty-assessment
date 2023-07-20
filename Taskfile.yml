@@ -1,0 +1,116 @@
+version: '3'
+
+env:
+  CONTAINER_REGISTRY_URL: localhost:5000
+
+dotenv:
+  - .env
+
+tasks:
+  dotenv:
+    preconditions:
+      - test -f .env
+  
+  build/api:
+    vars:
+      TAG: "{{.CONTAINER_REGISTRY_URL}}/api:latest"
+      SHA:
+        sh: tar -cf - api/ | shasum | rev | cut -c4- | rev
+    status:
+      - docker pull {{.TAG}}-{{.SHA}}
+    cmds:
+      - echo {{.TAG}}-{{.SHA}}
+      - docker build -t {{.TAG}}-{{.SHA}} api/
+      - docker push {{.TAG}}-{{.SHA}}
+
+  build/etl:
+    vars:
+      TAG: "{{.CONTAINER_REGISTRY_URL}}/etl:latest"
+      SHA:
+        sh: tar -cf - etl/ | shasum | rev | cut -c4- | rev
+    status:
+      - docker pull {{.TAG}}-{{.SHA}}
+    cmds:
+      - echo {{.TAG}}-{{.SHA}}
+      - docker build -t {{.TAG}}-{{.SHA}} etl/
+      - docker push {{.TAG}}-{{.SHA}}
+
+  build/bendsql:
+    vars:
+      TAG: "{{.CONTAINER_REGISTRY_URL}}/bendsql:latest"
+      SHA:
+        sh: tar -cf - bendsql/ | shasum | rev | cut -c4- | rev
+    status:
+      - docker pull {{.TAG}}-{{.SHA}}
+    cmds:
+      - echo {{.TAG}}-{{.SHA}}
+      - docker build -t {{.TAG}}-{{.SHA}} bendsql/
+      - docker push {{.TAG}}-{{.SHA}}
+
+  build:
+    deps:
+      - build/api
+      - build/etl
+      - build/bendsql
+
+  run/etl:
+    deps:
+      - build/etl
+    vars:
+      TAG: "{{.CONTAINER_REGISTRY_URL}}/etl:latest"
+      SHA:
+        sh: tar -cf - etl/ | shasum | rev | cut -c4- | rev
+    cmds:
+      - |
+        docker run --rm \
+        --name etl \
+        -e URL=${URL} \
+        -e SESSION_LENGTH=${SESSION_LENGTH} \
+        -e DATA_PATH=${DATA_PATH} \
+        -e BUCKET_REGION=${BUCKET_REGION} \
+        -e BUCKET_ENDPOINT=${BUCKET_ENDPOINT} \
+        -e ACCESS_KEY=${ACCESS_KEY} \
+        -e SECRET_KEY=${SECRET_KEY} \
+        -e STAGING_BUCKET=${STAGING_BUCKET} \
+        --network rusty-assessment_default {{.TAG}}-{{.SHA}}
+
+  run/bendsql:
+    deps:
+      - build/bendsql
+    vars:
+      TAG: "{{.CONTAINER_REGISTRY_URL}}/bendsql:latest"
+      SHA:
+        sh: tar -cf - bendsql/ | shasum | rev | cut -c4- | rev
+    cmds:
+      - docker run --name bendsql --network rusty-assessment_default {{.TAG}}-{{.SHA}} tail -f /dev/null
+
+  deploy:
+    deps:
+      - build
+      - dotenv
+    vars:
+      TAG: "{{.CONTAINER_REGISTRY_URL}}/api:latest"
+      SHA:
+        sh: tar -cf - api/ | shasum | rev | cut -c4- | rev
+    env:
+      API_IMAGE: "{{.TAG}}-{{.SHA}}"
+    cmds:
+      - docker compose up -d
+      - task: run/etl
+  
+  destroy:
+    vars:
+      TAG: "{{.CONTAINER_REGISTRY_URL}}/api:latest"
+      SHA:
+        sh: tar -cf - api/ | shasum | rev | cut -c4- | rev
+    env:
+      API_IMAGE: "{{.TAG}}-{{.SHA}}"
+    cmds:
+      - docker container rm -f bendsql || true
+      - docker compose down
+      - rm -rf minio/ || true
+
+  redeploy:
+    cmds:
+      - task: destroy
+      - task: deploy

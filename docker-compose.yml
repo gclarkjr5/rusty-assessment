@@ -1,0 +1,76 @@
+version: '3.8'
+
+
+services:
+  minio:
+    image: quay.io/minio/minio:latest
+    ports:
+      - 9000:9000
+      - 9090:9090
+    user: 504:20
+    container_name: minio1
+    environment:
+      - MINIO_ROOT_USER=${ACCESS_KEY}
+      - MINIO_ROOT_PASSWORD=${SECRET_KEY}
+    volumes:
+      - ./minio/:/data
+    command: ["server", "/data", "--console-address", ":9090"]
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:9090/"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  
+  mc:
+    image: minio/mc:latest
+    entrypoint: ["bash", "-c", "mc config host add minio ${BUCKET_ENDPOINT} ${ACCESS_KEY} ${SECRET_KEY} && mc mb minio/${DATABEND_DB} && mc mb minio/${STAGING_BUCKET}"]
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  databend:
+    image: datafuselabs/databend:latest
+    ports:
+      - 8000:8000
+      - 3307:3307
+    environment:
+      - QUERY_DEFAULT_USER=${DATABEND_USER}
+      - QUERY_DEFAULT_PASSWORD=${DATABEND_PWD}
+      - QUERY_STORAGE_TYPE=s3
+      - AWS_S3_ENDPOINT=${BUCKET_ENDPOINT}
+      - AWS_S3_BUCKET=${DATABEND_DB}
+      - AWS_ACCESS_KEY_ID=${ACCESS_KEY}
+      - AWS_SECRET_ACCESS_KEY=${SECRET_KEY}
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8000/"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  api:
+    image: ${API_IMAGE}
+    ports:
+      - 8888:8888
+    environment:
+      - BUCKET_ENDPOINT=${BUCKET_ENDPOINT}
+      - ACCESS_KEY=${ACCESS_KEY}
+      - SECRET_KEY=${SECRET_KEY}
+      - STAGING_BUCKET=${STAGING_BUCKET}
+      - DATABEND_USER=${DATABEND_USER}
+      - DATABEND_PWD=${DATABEND_PWD}
+      - DATABEND_HOST=${DATABEND_HOST}
+      - DATABEND_PORT=${DATABEND_PORT}
+      - DATABEND_DB=${DATABEND_DB}
+      - ROCKET_ADDRESS=${ROCKET_ADDRESS}
+      - ROCKET_PORT=${ROCKET_PORT}
+    depends_on:
+      databend:
+        condition: service_healthy
+  
+
+
+
+
